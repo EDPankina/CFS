@@ -2,25 +2,40 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 import time
-import json
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import os
 
 from prompts import ZERO_SHOT_PROMPT, FEW_SHOT_PROMPT, COT_PROMPT
 
 # ========================= НАСТРОЙКИ =========================
-DATA_PATH = "data/spam.csv"          
-SAMPLE_SIZE = 200                    
+SAMPLE_SIZE = 200
 RANDOM_STATE = 42
 
+# Поддержка двух возможных расположений датасета
+POSSIBLE_PATHS = [
+    "data/spam.csv",
+    "spam.csv",
+    "../spam.csv"
+]
+
 # ========================= ЗАГРУЗКА ДАННЫХ =========================
-df = pd.read_csv(DATA_PATH, encoding='latin-1')
+df = None
+for path in POSSIBLE_PATHS:
+    if os.path.exists(path):
+        df = pd.read_csv(path, encoding='latin-1')
+        print(f"Датасет успешно загружен из: {path}")
+        break
+
+if df is None:
+    raise FileNotFoundError("Не найден файл spam.csv. Положите его в папку 'data/' или в корень проекта.")
+
 df = df[['v1', 'v2']].rename(columns={'v1': 'label', 'v2': 'message'})
 df = df.sample(SAMPLE_SIZE, random_state=RANDOM_STATE).reset_index(drop=True)
 
 # Преобразуем метки в числовой формат: ham=0, spam=1
 df['true_label'] = df['label'].str.lower().map({'ham': 0, 'spam': 1})
 
-print(f"Загружено {len(df)} сообщений для оценки.")
+print(f"Загружено {len(df)} сообщений для оценки.\n")
 
 # ========================= ФУНКЦИИ =========================
 def query_llm(prompt: str, model: str = "qwen2.5:0.5b") -> str:
@@ -39,16 +54,19 @@ def query_llm(prompt: str, model: str = "qwen2.5:0.5b") -> str:
         print(f"Ошибка запроса к LLM: {e}")
         return ""
 
+
 def extract_verdict(text: str) -> int:
     """Извлекаем 0 (ham) или 1 (spam) из ответа модели"""
     if not text:
         return 0
+    
     text_lower = text.lower().strip()
     
-    # Проверяем точные слова в конце ответа
-    if any(x in text_lower.split()[-3:] for x in ['spam']):
+    # Проверка последних слов ответа
+    last_words = text_lower.split()[-3:]
+    if 'spam' in last_words:
         return 1
-    if any(x in text_lower.split()[-3:] for x in ['ham']):
+    if 'ham' in last_words:
         return 0
     
     # Общий поиск
@@ -57,7 +75,7 @@ def extract_verdict(text: str) -> int:
     if "ham" in text_lower:
         return 0
     
-    return 0  # по умолчанию считаем ham
+    return 0  # по умолчанию ham
 
 
 # ========================= ОСНОВНОЙ ЦИКЛ =========================
@@ -68,14 +86,14 @@ techniques = {
     "cot": COT_PROMPT,
 }
 
-print("Начинаю оценку техник промптинга...")
+print("Начинаю оценку техник промптинга...\n")
 
 for tech_name, prompt_template in techniques.items():
-    print(f"\n→ Обрабатываю технику: {tech_name.upper()}")
+    print(f"→ Обрабатываю технику: {tech_name.upper()}")
     
     predictions = []
     
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc=tech_name):
+    for _, row in tqdm(df.iterrows(), total=len(df), desc=tech_name):
         message = row['message']
         prompt = prompt_template.format(message=message)
         
@@ -84,13 +102,12 @@ for tech_name, prompt_template in techniques.items():
         
         predictions.append(pred)
         
-        # Небольшая задержка, чтобы не перегружать Ollama
-        time.sleep(0.25)
+        time.sleep(0.25)  # небольшая задержка
     
-    # Сохраняем предсказания для этой техники
+    # Сохраняем предсказания
     df[f"pred_{tech_name}"] = predictions
     
-    # Метрики
+    # Вычисляем метрики
     acc = accuracy_score(df['true_label'], predictions)
     prec = precision_score(df['true_label'], predictions, zero_division=0)
     rec = recall_score(df['true_label'], predictions, zero_division=0)
@@ -108,6 +125,7 @@ for tech_name, prompt_template in techniques.items():
 print("\n" + "="*60)
 print("РЕЗУЛЬТАТЫ СРАВНЕНИЯ ТЕХНИК ПРОМПТИНГА")
 print("="*60)
+
 comparison_df = pd.DataFrame(results)
 print(comparison_df.to_string(index=False))
 
@@ -115,6 +133,6 @@ print(comparison_df.to_string(index=False))
 comparison_df.to_csv("prompting_comparison.csv", index=False)
 df.to_csv("detailed_prompting_results.csv", index=False)
 
-print("\nФайлы сохранены:")
+print("\nФайлы успешно сохранены:")
 print("- prompting_comparison.csv — таблица с метриками")
-print("- detailed_prompting_results.csv — все сообщения + предсказания")
+print("- detailed_prompting_results.csv — детальные результаты")
