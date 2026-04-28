@@ -1,0 +1,4 @@
+Technique,Accuracy,Precision,Recall,F1-score
+ZERO_SHOT,0.825,0.7917,0.76,0.7755
+FEW_SHOT,0.87,0.8421,0.8,0.8205
+COT,0.855,0.825,0.82,0.8225
